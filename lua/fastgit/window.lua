@@ -1,9 +1,28 @@
+local M = {}
+
+-- Runs a command and captures its output
+-- @param command string The command to run
+-- @returns string The output of the command
+function M.handle_command(command)
+    local handle = io.popen(command)
+    if handle == nil then
+        -- TODO: show error to user
+        return
+    end
+    local output = handle:read("*a")
+    handle:close()
+    return output
+end
+
 -- Opens a command in a new window
 -- @param command string The command to run
 -- @param height number The height of the window
-function open_command_in_window(command, height)
+function M.open_command_in_window(command, height)
     -- Run the command and capture its output
-    local output = handle_command(command)
+    local output = M.handle_command(command)
+    if output == nil then
+        return
+    end
 
     -- Create a new buffer
     local buf = vim.api.nvim_create_buf(false, true)
@@ -34,25 +53,13 @@ end
 -- @param content string[] The content to display
 -- @param opts table The options
 -- @returns void
-function open_new_window(content, opts)
+function M.open_new_window(content, opts)
     -- TODO: implement code here
     vim.notify(content, vim.log.levels.ERROR, {})
 end
 
--- Runs a command and captures its output
--- @param command string The command to run
--- @returns string The output of the command
-local function handle_command(command)
-    local handle = io.popen(command)
-    if handle == nil then
-        -- TODO: show error to user
-        return
-    end
-    local output = handle:read("*a")
-    handle:close()
-    return output
-end
-
-function log_error(message)
+function M.log_error(message)
     vim.notify_once(message, vim.log.levels.ERROR, {})
 end
+
+return M
