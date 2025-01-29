@@ -1,9 +1,13 @@
-local M = {}
+local M = {
+    config = {
+        use_current_branch = false,
+    },
+}
 local git_actions = require('fastgit.git')
 
 function M.setup(config)
-    config = 1 -- do something
-    print(config)
+    M.config = vim.tbl_extend('force', M.config, user_config or {})
+
     vim.api.nvim_create_user_command("Git", function(opts)
         git_actions.raw_git(opts.args)
     end, { nargs = '*' })
