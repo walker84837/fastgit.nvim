@@ -7,6 +7,7 @@ local M = {}
 -- @param args string[] List of arguments
 -- @returns void
 function M.raw_git(args)
+    args = args or ""
     local cmd = "git " .. args
     os.execute(vim.fn.shellescape(cmd))
 end
@@ -29,9 +30,7 @@ function M.git_commit()
     })
 end
 
-function M.git_push()
-    local fastgit = require('fastgit')
-    local config = fastgit.config or {}
+function M.git_push(config)
     local branch
 
     if config.use_current_branch then
@@ -89,6 +88,10 @@ function M.replace_origin_remote(new_remote)
 end
 
 function M.git_add(files)
+    if not files or files == "" then
+        window.log_error("Error: No files specified")
+        return
+    end
     local command = "git add " .. files
     local result = os.execute(command)
     if result ~= 0 then
