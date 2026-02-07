@@ -2,125 +2,121 @@ local window = require('fastgit.window')
 
 local M = {}
 
--- Runs a git command directly. This does not check if the command
--- is valid and allows ANY command to be run, including dangerous ones.
--- @param args string[] List of arguments
--- @returns void
+-- Runs a git command safely, returns success/failure
+-- @param args string|string[] Arguments to git
+-- @returns boolean success
 function M.raw_git(args)
     args = args or ""
-    local cmd = "git " .. args
-    local success, result = pcall(os.execute, vim.fn.shellescape(cmd))
-    if not success then
-        window.log_error("Error: Failed to execute git command: " .. cmd)
+    local cmd
+    if type(args) == "table" then
+        cmd = "git " .. table.concat(args, " ")
+    else
+        cmd = "git " .. args
     end
+
+    local success, result = pcall(function()
+        return os.execute(cmd)
+    end)
+
+    if not success or result ~= 0 then
+        window.log_error("Failed to execute git command: " .. cmd)
+        return false
+    end
+
+    return true
 end
 
 -- Opens a terminal for git commit
 function M.git_commit()
     vim.cmd("tabnew | terminal git commit")
-
-    -- Autocommand to handle the commit message buffer
     vim.api.nvim_create_autocmd("BufReadPost", {
         pattern = "COMMIT_EDITMSG",
+        once = true,
         callback = function()
             local bufnr = vim.api.nvim_get_current_buf()
-
             vim.cmd("vsplit")
             vim.api.nvim_set_current_buf(bufnr)
-
             vim.bo[bufnr].filetype = "gitcommit"
             vim.bo[bufnr].modifiable = true
         end,
     })
 end
 
--- Pushes changes to the remote repository
--- @param config table Configuration table
+-- Pushes changes to remote
+-- @param config table
 function M.git_push(config)
     config = config or {}
-    local branch
-
-    if config.use_current_branch then
-        branch = M.get_current_branch()
-    else
-        branch = M.get_main_branch_name()
-    end
+    local branch = config.use_current_branch and M.get_current_branch() or M.get_main_branch_name()
 
     if not branch then
-        window.log_error("Error: No branch found")
+        window.log_error("No branch found to push")
         return
     end
 
-    local command = "git push -u origin " .. branch
-    window.open_command_in_window(command, 10)
+    local cmd = "git push -u origin " .. branch
+    window.open_command_in_window(cmd, 10)
 end
 
--- Gets the current branch name
--- @returns string|nil
+-- Get current branch name
 function M.get_current_branch()
     local handle = io.popen("git branch --show-current 2> /dev/null")
     if not handle then
-        window.log_error("Error: Failed to get current branch")
+        window.log_error("Failed to get current branch")
         return nil
     end
+
     local branch = handle:read("*a"):gsub("%s+$", "")
     handle:close()
     return branch ~= "" and branch or nil
 end
 
--- Returns the name of the main branch
--- @returns string|nil
+-- Get main branch name from remote
 function M.get_main_branch_name()
-    local handle = io.popen(vim.fn.shellescape("git ls-remote --symref origin HEAD"))
+    local handle = io.popen("git ls-remote --symref origin HEAD")
     if not handle then
-        window.log_error("Error: Failed to run git command")
+        window.log_error("Failed to get main branch from remote")
         return nil
     end
+
     local result = handle:read("*a")
     handle:close()
 
-    -- Parse the output to extract the branch name
     for line in result:gmatch("[^\r\n]+") do
         local branch = line:match("^ref:%srefs/heads/(.+)%sHEAD$")
-        if branch then
-            return branch
-        end
+        if branch then return branch end
     end
 
+    window.log_error("Could not parse main branch from remote")
     return nil
 end
 
--- Replaces the origin remote URL
--- @param new_remote string New remote URL
+-- Replace origin remote
 function M.replace_origin_remote(new_remote)
     if not new_remote or new_remote == "" then
-        window.log_error("Error: No remote URL provided")
+        window.log_error("No remote URL provided")
         return
     end
-    os.execute("git remote remove origin")
-    os.execute("git remote add origin " .. new_remote)
+
+    if not M.raw_git({ "remote", "remove", "origin" }) then return end
+    if not M.raw_git({ "remote", "add", "origin", new_remote }) then return end
 end
 
--- Adds files to the git index
--- @param files string Files to add
+-- Add files
 function M.git_add(files)
     if not files or files == "" then
-        window.log_error("Error: No files specified")
+        window.log_error("No files specified for git add")
         return
     end
-    local command = "git add " .. files
-    local success, result = pcall(os.execute, command)
-    if not success or result ~= 0 then
-        window.log_error("Error: Failed to run git command")
-        return
+
+    local success = M.raw_git({ "add", files })
+    if success then
+        vim.notify("Added files: " .. files, vim.log.levels.INFO, {})
     end
-    vim.notify("Added files: " .. files, vim.log.levels.INFO, {})
 end
 
--- Pulls changes from the remote repository
+-- Pull changes
 function M.git_pull()
-    local command = "git pull"
-    window.open_command_in_window(command, 10)
+    window.open_command_in_window("git pull", 10)
 end
 
 return M

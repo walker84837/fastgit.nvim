@@ -1,39 +1,24 @@
 local M = {
-    config = {
-        use_current_branch = false,
-    },
+    config = { use_current_branch = false },
 }
 
 local git_actions = require('fastgit.git')
 
--- Sets up the plugin with user configuration
--- @param config table User configuration
 function M.setup(config)
     M.config = vim.tbl_deep_extend("force", M.config, config or {})
 
-    vim.api.nvim_create_user_command("Git", function(opts)
-        git_actions.raw_git(opts.args)
-    end, { nargs = '*' })
+    local cmds = {
+        { name = "Git",              fn = function(opts) git_actions.raw_git(opts.args) end,               nargs = '*' },
+        { name = "GitCommit",        fn = git_actions.git_commit,                                          nargs = 0 },
+        { name = "GitPush",          fn = function() git_actions.git_push(M.config) end,                   nargs = 0 },
+        { name = "GitPull",          fn = git_actions.git_pull,                                            nargs = 0 },
+        { name = "GitAdd",           fn = function(opts) git_actions.git_add(opts.args) end,               nargs = '*' },
+        { name = "GitReplaceRemote", fn = function(opts) git_actions.replace_origin_remote(opts.args) end, nargs = 1 },
+    }
 
-    vim.api.nvim_create_user_command("GitCommit", function()
-        git_actions.git_commit()
-    end, { nargs = 0 })
-
-    vim.api.nvim_create_user_command("GitPush", function()
-        git_actions.git_push(M.config)
-    end, { nargs = 0 })
-
-    vim.api.nvim_create_user_command("GitPull", function()
-        git_actions.git_pull()
-    end, { nargs = 0 })
-
-    vim.api.nvim_create_user_command("GitAdd", function(opts)
-        git_actions.git_add(opts.args)
-    end, { nargs = '*' })
-
-    vim.api.nvim_create_user_command("GitReplaceRemote", function(opts)
-        git_actions.replace_origin_remote(opts.args)
-    end, { nargs = 1 })
+    for _, cmd in ipairs(cmds) do
+        vim.api.nvim_create_user_command(cmd.name, cmd.fn, { nargs = cmd.nargs })
+    end
 end
 
 return M
