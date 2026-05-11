@@ -1,38 +1,25 @@
 local M = {}
 
--- Runs a command and captures its output
--- @param command string The command to run
--- @returns string The output of the command
-function M.handle_command(command)
-    local handle = io.popen(command)
-    if handle == nil then
-        -- TODO: show error to user
-        return
-    end
-    local output = handle:read("*a")
-    handle:close()
-    return output
-end
-
--- Opens a command in a new window
--- @param command string The command to run
--- @param height number The height of the window
-function M.open_command_in_window(command, height)
-    -- Run the command and capture its output
-    local output = M.handle_command(command)
-    if output == nil then
-        return
-    end
+-- Opens a new window with the given content
+-- @param content string|string[] The content to display
+-- @param height number|nil The height of the window (optional)
+function M.show_in_window(content, height)
+    if not content then return end
+    
+    local lines = type(content) == "table" and content or vim.split(content, "\n")
+    if #lines == 0 then return end
 
     -- Create a new buffer
     local buf = vim.api.nvim_create_buf(false, true)
 
     -- Set the buffer's content
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(output, "\n"))
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
     -- Calculate window size and position
     local win_width = vim.o.columns
-    local win_height = height
+    -- Default height to content size, capped at a reasonable max, or use provided height
+    local win_height = height or math.min(#lines + 2, 20)
+    
     -- Positioned above the command line
     local row = vim.o.lines - win_height - 2
     local col = 0
@@ -44,22 +31,23 @@ function M.open_command_in_window(command, height)
         row = row,
         col = col,
         style = "minimal",
+        border = "single"
     })
 
     vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
-end
-
--- Opens a new window with the given content
--- @param content string[] The content to display
--- @param opts table The options
--- @returns void
-function M.open_new_window(content, opts)
-    -- TODO: implement code here
-    vim.notify(content, vim.log.levels.ERROR, {})
+    vim.api.nvim_set_option_value("filetype", "fastgit-output", { buf = buf })
+    
+    -- Close window on q or Esc
+    vim.keymap.set("n", "q", "<cmd>close<CR>", { buffer = buf, silent = true })
+    vim.keymap.set("n", "<Esc>", "<cmd>close<CR>", { buffer = buf, silent = true })
 end
 
 function M.log_error(message)
-    vim.notify_once(message, vim.log.levels.ERROR, {})
+    vim.notify(message, vim.log.levels.ERROR, { title = "FastGit" })
+end
+
+function M.log_info(message)
+    vim.notify(message, vim.log.levels.INFO, { title = "FastGit" })
 end
 
 return M
