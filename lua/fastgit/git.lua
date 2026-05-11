@@ -2,86 +2,97 @@ local window = require('fastgit.window')
 
 local M = {}
 
--- Runs a git command safely, returns success/failure
--- @param args string|string[] Arguments to git
--- @returns boolean success
-function M.raw_git(args)
-    args = args or ""
-    local cmd
+local function run_git_sync(args)
+    local cmd = { "git" }
     if type(args) == "table" then
-        cmd = "git " .. table.concat(args, " ")
+        vim.list_extend(cmd, args)
     else
-        cmd = "git " .. args
+        for part in string.gmatch(args, "%S+") do
+            table.insert(cmd, part)
+        end
     end
 
-    local success, result = pcall(function()
-        return os.execute(cmd)
-    end)
-
-    if not success or result ~= 0 then
-        window.log_error("Failed to execute git command: " .. cmd)
-        return false
-    end
-
-    return true
+    local result = vim.system(cmd, { text = true }):wait()
+    return result
 end
 
--- Opens a terminal for git commit
+local function run_git_async(args, on_success, on_error)
+    local cmd = { "git" }
+    if type(args) == "table" then
+        vim.list_extend(cmd, args)
+    else
+        for part in string.gmatch(args, "%S+") do
+            table.insert(cmd, part)
+        end
+    end
+
+    vim.system(cmd, { text = true }, function(obj)
+        if obj.code ~= 0 then
+            local err_msg = "Git command failed: " .. table.concat(cmd, " ") .. "\n" .. (obj.stderr or "")
+            vim.schedule(function()
+                window.log_error(err_msg)
+            end)
+            if on_error then on_error(obj.stderr) end
+        else
+            if on_success then
+                vim.schedule(function()
+                    on_success(obj.stdout)
+                end)
+            end
+        end
+    end)
+end
+
+function M.raw_git(args)
+    run_git_async(args, function(stdout)
+        if stdout and stdout ~= "" then
+            vim.schedule(function()
+                window.show_in_window(stdout)
+            end)
+        else
+            vim.schedule(function()
+                window.log_info("Git command executed successfully")
+            end)
+        end
+    end)
+end
+
 function M.git_commit()
-    vim.cmd("tabnew | terminal git commit")
-    vim.api.nvim_create_autocmd("BufReadPost", {
-        pattern = "COMMIT_EDITMSG",
+    vim.cmd("tabnew")
+    vim.cmd("terminal git commit")
+    vim.cmd("startinsert")
+
+    local bufnr = vim.api.nvim_get_current_buf()
+    vim.api.nvim_create_autocmd("TermClose", {
+        buffer = bufnr,
         once = true,
         callback = function()
-            local bufnr = vim.api.nvim_get_current_buf()
-            vim.cmd("vsplit")
-            vim.api.nvim_set_current_buf(bufnr)
-            vim.bo[bufnr].filetype = "gitcommit"
-            vim.bo[bufnr].modifiable = true
+            vim.schedule(function()
+                if vim.api.nvim_buf_is_valid(bufnr) then
+                    vim.cmd("bdelete! " .. bufnr)
+                end
+            end)
         end,
     })
 end
 
--- Pushes changes to remote
--- @param config table
-function M.git_push(config)
-    config = config or {}
-    local branch = config.use_current_branch and M.get_current_branch() or M.get_main_branch_name()
-
-    if not branch then
-        window.log_error("No branch found to push")
-        return
-    end
-
-    local cmd = "git push -u origin " .. branch
-    window.open_command_in_window(cmd, 10)
-end
-
--- Get current branch name
 function M.get_current_branch()
-    local handle = io.popen("git branch --show-current 2> /dev/null")
-    if not handle then
+    local result = run_git_sync({ "branch", "--show-current" })
+    if result.code ~= 0 then
         window.log_error("Failed to get current branch")
         return nil
     end
-
-    local branch = handle:read("*a"):gsub("%s+$", "")
-    handle:close()
-    return branch ~= "" and branch or nil
+    return result.stdout:gsub("%s+$", "")
 end
 
--- Get main branch name from remote
 function M.get_main_branch_name()
-    local handle = io.popen("git ls-remote --symref origin HEAD")
-    if not handle then
+    local result = run_git_sync({ "ls-remote", "--symref", "origin", "HEAD" })
+    if result.code ~= 0 then
         window.log_error("Failed to get main branch from remote")
         return nil
     end
 
-    local result = handle:read("*a")
-    handle:close()
-
-    for line in result:gmatch("[^\r\n]+") do
+    for line in result.stdout:gmatch("[^\r\n]+") do
         local branch = line:match("^ref:%srefs/heads/(.+)%sHEAD$")
         if branch then return branch end
     end
@@ -90,33 +101,73 @@ function M.get_main_branch_name()
     return nil
 end
 
--- Replace origin remote
-function M.replace_origin_remote(new_remote)
-    if not new_remote or new_remote == "" then
-        window.log_error("No remote URL provided")
+function M.git_push(config)
+    config = config or {}
+    local branch = config.use_current_branch and M.get_current_branch() or M.get_main_branch_name()
+
+    if not branch or branch == "" then
+        window.log_error("No branch found to push")
         return
     end
 
-    if not M.raw_git({ "remote", "remove", "origin" }) then return end
-    if not M.raw_git({ "remote", "add", "origin", new_remote }) then return end
+    local args = { "push", "-u", "origin", branch }
+
+    window.log_info("Pushing to " .. branch .. "...")
+    run_git_async(args, function(stdout)
+        vim.schedule(function()
+            local output = stdout
+            if output == "" then output = "Push successful (no output)" end
+            window.show_in_window(output)
+        end)
+    end)
 end
 
--- Add files
+function M.git_pull()
+    window.log_info("Pulling...")
+    run_git_async({ "pull" }, function(stdout)
+        vim.schedule(function()
+            local output = stdout
+            if output == "" then output = "Pull successful (no output)" end
+            window.show_in_window(output)
+        end)
+    end)
+end
+
 function M.git_add(files)
     if not files or files == "" then
         window.log_error("No files specified for git add")
         return
     end
 
-    local success = M.raw_git({ "add", files })
-    if success then
-        vim.notify("Added files: " .. files, vim.log.levels.INFO, {})
+    local args = { "add" }
+    if type(files) == "table" then
+        vim.list_extend(args, files)
+    else
+        for part in string.gmatch(files, "%S+") do
+            table.insert(args, part)
+        end
     end
+
+    run_git_async(args, function()
+        vim.schedule(function()
+            window.log_info("Added files")
+        end)
+    end)
 end
 
--- Pull changes
-function M.git_pull()
-    window.open_command_in_window("git pull", 10)
+function M.replace_origin_remote(new_remote)
+    if not new_remote or new_remote == "" then
+        window.log_error("No remote URL provided")
+        return
+    end
+
+    run_git_sync({ "remote", "remove", "origin" })
+    local res = run_git_sync({ "remote", "add", "origin", new_remote })
+    if res.code ~= 0 then
+        window.log_error("Failed to add remote: " .. (res.stderr or ""))
+    else
+        window.log_info("Remote origin updated to " .. new_remote)
+    end
 end
 
 return M
